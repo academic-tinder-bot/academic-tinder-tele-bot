@@ -1,224 +1,284 @@
 
 from __future__ import annotations
-from logging import error
 
-
-from threading import current_thread
 from typing import Dict, List
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# from utils.user_classes import User
+cred = credentials.Certificate(
+    "src\keys\makerthon-2022-9a97e-firebase-adminsdk-qniun-0539fb076e.json")
+firebase_admin.initialize_app(cred)
+db = firestore.client()  # this connects to our Firestore database
 
 
-class FireStoreManager:
+moduleToUserCollection = db.collection(
+    'Module-to-User')  # opens 'module-to-user' collection
+userToModuleCollection = db.collection("User-to-Module")
 
-    instance: FireStoreManager
+userToUserCollection = db.collection("User-to-User")
+
+
+class _UserModuleGraphHandler():
+    """
+    Handler for managing two FireStore databases, Module-to-User and User-to-Module DBs.
+    Simulates a bipartite graph connecting users to modules with adjacency lists.
+    """
+
+    # Label for user adjacency list
+    USER_NEIGHBOUR_LABEL = "Modules"
+
+    # Label for module adjacency list
+    MODULE_NEIGHBOUR_LABEL = "Users"
 
     def __init__(self) -> None:
-        self.cred = credentials.Certificate(
-            "src\keys\makerthon-2022-9a97e-firebase-adminsdk-qniun-0539fb076e.json")
-        firebase_admin.initialize_app(self.cred)
+        pass
 
-        self.db = firestore.client()  # this connects to our Firestore database
-        FireStoreManager.instance = self
-        self.moduleToUserCollection = self.db.collection(
-            'Module-to-User')  # opens 'module-to-user' collection
-        self.userToModuleCollection = self.db.collection("User-to-Module")
+    # add vertice (user)
 
-        self.userToUserCollection = self.db.collection("User-to-User")
+    def addUser(self, userid: str) -> None:
+        """Adds the user in the "user-to-module" database.
+        Does nothing if the user already exists."""
+        if(not userToModuleCollection.document(userid).get().exists):
+            userToModuleCollection.document(
+                userid).set({self.USER_NEIGHBOUR_LABEL: []})
 
-    @classmethod
-    def getInstance(cls) -> FireStoreManager:
-        return cls.instance
+    def removeUser(self, userid: str) -> None:
+        """Removes the user from the "user-to-module" database."""
+        modules = self.getUserModules(userid)
+        for module in modules:
+            self.removeUserModuleEdge(userid, module)
+        userToModuleCollection.document(userid).delete()
 
-    ########## User-to-Module and Module-to-User DB ##########
-    def unregisterModule(self, modulecode: str):
-        """
-        TODO: Removes module from both module-to-user and user-to-module databases. Removes user purely by module code.
-        """
+    def addModule(self, moduleCode: str) -> None:
+        """Adds a module in the module-to-user database.
+        Does nothing if the module already exists."""
+        if(not moduleToUserCollection.document(moduleCode).get().exists):
+            moduleToUserCollection.document(moduleCode).set(
+                {self.MODULE_NEIGHBOUR_LABEL: []})
 
-    def updateUserModuleList(self, chatid: int, moduleCodeList: List[str]):
-        """Updates the module list of the user to the list given. Updates two databases:
-        1. module-to-user database
-        2. user-to-module database
+    def removeModule(self, moduleCode: str) -> None:
+        """Removes a module in the module-to-user database."""
+        users = self.getModuleUsers(moduleCode)
+        for user in users:
+            self.removeUserModuleEdge(user, moduleCode)
+        moduleToUserCollection.document(moduleCode).delete()
 
-        How it works is that removes the relevant user-module from the DB, then updates the user module list."""
+    def addUsertoModuleDirectedEdge(self, userid: str, moduleCode: str) -> None:
+        """Adds a user-module edge in the user-to-module 
+        Does nothing if module is already there."""
+        modules = self.getUserModules(userid)
 
-        currentModuleList = self.getModulesfromUser(chatid=chatid)
+        if(not moduleCode in modules):
+            modules.append(moduleCode)
+            userToModuleCollection.document(
+                userid).set({self.USER_NEIGHBOUR_LABEL: modules})
 
-        # Remove modules
-        for module in currentModuleList:
-            if(not module in moduleCodeList):
-                self.removeModuleFromUser(chatid=chatid, moduleCode=module)
+    def removeUsertoModuleDirectedEdge(self, userid: str, moduleCode: str) -> None:
+        """Removes a user-module edge in the user-to-module 
+        Does nothing if module is not there."""
+        modules = self.getUserModules(userid)
 
-        # Set new module list
-        self.userToModuleCollection.document(str(chatid)).set({
-            "Modules": moduleCodeList
-        })
+        if(moduleCode in modules):
+            modules.remove(moduleCode)
+            userToModuleCollection.document(
+                userid).set({self.USER_NEIGHBOUR_LABEL: modules})
 
-    def removeModuleFromUser(self, chatid: int, moduleCode: str):
-        """
-        Removes module from user. Updates two databases:
-        1. module-to-user database
-        2. user-to-module database"""
+    def addModuletoUserDirectedEdge(self, userid: str, moduleCode: str) -> None:
+        """Adds a user-module edge in the module-to-user 
+        Does nothing if module is not there."""
+        users = self.getModuleUsers(moduleCode)
 
-        # Remove the user from the module-to-user list
-        self.moduleToUserCollection.document(moduleCode).set({
-            "Users": [element for element in self.getUsersFromModule(moduleCode=moduleCode) if element != chatid]
-        })
+        if(not userid in users):
+            users.append(userid)
+            moduleToUserCollection.document(
+                moduleCode).set({self.MODULE_NEIGHBOUR_LABEL: users})
 
-        # Remove the module from the user-to-module list
-        self.userToModuleCollection.document(str(chatid)).set({
-            "Modules": [module_element for module_element in self.getModulesfromUser(chatid=chatid) if module_element != moduleCode]
-        })
+    def removeModuletoUserDirectedEdge(self, userid: str, moduleCode: str) -> None:
+        """Removes a user-module edge in the module-to-user 
+        Does nothing if module is not there."""
+        users = self.getModuleUsers(moduleCode)
 
-    # TODO: Make this module code a *moduleCodes so that I can just call it once instead of looping through.
-    def registerUsertoModule(self, chatid: int, moduleCode: str) -> None:
-        """
-        Updates two databases in firebase:
-        1. Updates module-to-user database to register user to module
-        2. Updates user-to-module database to allow easy retrieval of list of modules.
-        """
-        self.addUsertoModule(chatid, moduleCode)
-        self.addModuletoUser(chatid, moduleCode)
+        if(userid in users):
+            users.remove(userid)
+            moduleToUserCollection.document(
+                moduleCode).set({self.MODULE_NEIGHBOUR_LABEL: users})
 
-    def addUsertoModule(self, chatid, moduleCode: str) -> None:
-        currentUsersinModule = self.getUsersFromModule(moduleCode)
+    def addUserModuleEdge(self, userid: str, moduleCode: str) -> None:
+        """Adds a user-module edge in both the module-to-user and user-to-module """
+        # Just in case
+        self.addModule(moduleCode)
 
-        # If list is None, make it empty list
-        if(currentUsersinModule == None):
-            currentUsersinModule = []
+        self.addModuletoUserDirectedEdge(userid, moduleCode)
+        self.addUsertoModuleDirectedEdge(userid, moduleCode)
 
-        # Check if user is already in user-to-module database, and update database.
-        elements_to_remove = []
-        for i in range(len(currentUsersinModule)):
-            if currentUsersinModule[i] == chatid:
-                elements_to_remove.append(i)
-        for i in range(len(elements_to_remove)-1, -1, -1):
-            currentUsersinModule.pop(i)
-        currentUsersinModule.append(chatid)
+    def removeUserModuleEdge(self, userid: str, moduleCode: str) -> None:
+        """Removes a user-module edge in both the module-to-user and user-to-module """
+        self.removeModuletoUserDirectedEdge(userid, moduleCode)
+        self.removeUsertoModuleDirectedEdge(userid, moduleCode)
 
-        self.moduleToUserCollection.document(moduleCode).set({
-            "Users": currentUsersinModule
-        })
-
-    def addModuletoUser(self, chatid: int, moduleCode: str) -> None:
-        currentModulesinUser = self.getModulesfromUser(chatid)
-
-        # If module already in user DB, then skip
-        if moduleCode in currentModulesinUser:
-            return
-
-        # Check if module is already in user-to-module database, and update database.
-        elements_to_remove = []
-        for i in range(len(currentModulesinUser)):
-            if currentModulesinUser[i] == moduleCode:
-                elements_to_remove.append(i)
-        for i in range(len(elements_to_remove)-1, -1, -1):
-            currentModulesinUser.pop(i)
-        currentModulesinUser.append(moduleCode)
-        self.userToModuleCollection.document(str(chatid)).set({
-            "Modules": currentModulesinUser
-        })
-
-    def getUsersFromModule(self, moduleCode: str) -> List[dict]:
-        try:
-            return self.moduleToUserCollection.document(moduleCode).get().to_dict()["Users"]
-        except TypeError:
-            return []
-
-    def getModulesfromUser(self, chatid: int) -> List[str]:
-        try:
-            return self.userToModuleCollection.document(str(chatid)).get().to_dict()["Modules"]
-        except TypeError:
-            return []
-
-    ########## User-to-User Graph DB ##########
-    # This simulates a graph DB for keeping track of which users have convos with which users.
-    # Instead of using edge lists, we will use adjacency lists.
-    # use self.userToUserCollection.
-    # In users, there is a list of dict {userid1: relationship1, userid2: relationship2, ...}
-
-    def registerUserVertice(self, userid: int):
-        """Register a user in the User-to-User DB if they aren't already there"""
-        if(not str(userid) in self.getAllUserVertices()):
-            self.userToUserCollection.document(
-                str(userid)).set({"Neighbours": {}})
-
-    def registerUserEdge(self, userid1: int, userid2: int, relationship: str = "Random Matching"):
-        """Registers a user1, user2 edge in DB."""
-        self.registerUserVertice(userid1)
-        self.registerUserVertice(userid2)
-
-        # Add userid2 to userid1.
-        user1_neighbours = self.getUserNeighbours(userid1)
-
-        user1_neighbours[str(userid2)] = relationship
-
-        self.userToUserCollection.document(str(userid1)).set(
-            {"Neighbours": user1_neighbours})
-
-        # Add userid1 to userid2.
-        user2_neighbours = self.getUserNeighbours(userid2)
-
-        user2_neighbours[str(userid1)] = relationship
-
-        self.userToUserCollection.document(str(userid2)).set(
-            {"Neighbours": user2_neighbours})
-
-    def deleteUserVertice(self, userid: int):
-        for neighbour in self.getUserNeighbours(userid).keys():
-            self.deleteUserEdge(userid, neighbour)
+    def updateUserModules(self, userid: str, moduleCodes: List[str]) -> None:
+        """Updates the modules that a user takes to particular list of modules.
+        TODO: Place for optimisation here, just directly set the module list instead of updating one-by-one. Use the directed graph edge handlers."""
+        currentModules = self.getUserModules(userid)
+        for module in moduleCodes:
+            if not(module in currentModules):
+                self.addUserModuleEdge(userid, module)
         
-        self.userToUserCollection.document(str(userid)).delete()
+        for module in currentModules:
+            if not(module in moduleCodes):
+                self.removeUserModuleEdge(userid, module)
 
-    def deleteUserEdge(self, userid1: int, userid2: int):
+
+    # Utils
+
+    def getUserModules(self, userid: str) -> List[str]:
+        """Returns a list of the modules the user takes."""
+        return userToModuleCollection.document(
+            userid).get().to_dict()[self.USER_NEIGHBOUR_LABEL]
+
+    def getModuleUsers(self, moduleCode: str) -> List[str]:
+        """Returns a list of users that is enrolled in the module."""
+        return moduleToUserCollection.document(moduleCode).get().to_dict()[self.MODULE_NEIGHBOUR_LABEL]
+
+    def printUserToModuleDB(self) -> None:
+        """Prints all documents in the user-to-module """
+        print(
+            *[f"\n{document.id} => {document.to_dict()}" for document in userToModuleCollection.get()])
+
+    def printModuletoUserDB(self) -> None:
+        """Prints all documents in the module-to-user """
+        print(
+            *[f"\n{document.id} => {document.to_dict()}" for document in moduleToUserCollection.get()])
+
+
+class _UserUserGraphHandler():
+    """
+    Handler for user graphs representing current active chats.
+    The dict structure is
+    {
+        USERID: 
+        {   
+            name: NAME
+            relationship: RELATIONSHIP
+            alias: ALIAS
+        }
+    }
+    """
+    # Label for list of users
+    USER_NEIGHBOUR_LABEL = "Neighbours"
+
+    # Labels for each neighbour's id
+    NEIGHBOUR_ID_LABEL = "ID"
+    # Labels for relationship to neighbour
+    NEIGHBOUR_RELATIONSHIP_LABEL = "Relationship"
+    # Labels for anonymous alias to neighbour
+    NEIGHBOUR_ALIAS_LABEL = "Alias"
+    
+    def __init__(self) -> None:
+        pass
+
+    def addUser(self, userid: str) -> None:
+        """Adds a user to the user-to-user 
+        Does nothing if the user already exists."""
+        if(not userToUserCollection.document(userid).get().exists):
+            userToUserCollection.document(userid).set(
+                {self.USER_NEIGHBOUR_LABEL: []})
+
+    def removeUser(self, userid: str) -> None:
+        """Deletes a user from the user-to-user 
+        TODO: Room for optimisation here, this tries to delete from params(userid) when it will be deleted anyways."""
+        userList = self.getNeighbours(userid)
+        for user in userList:
+            self.removeUsertoUserEdge(userid, user)
+        userToUserCollection.document(userid).delete()
+
+    def addDirectedUsertoUserEdge(self, userid1: str, userid2: str, relationship: str, alias: str) -> None:
+        """Add a directed edge from user1 to user2. More specifically, this
+        adds user2 to the adjacency list of user1.
+        This needs a relationship and alias label for the edge."""
+        user1List = self.getNeighbours(userid1)
+
+        connected = False
+        for i in range(len(user1List)):
+            if(userid2 == user1List[i][self.NEIGHBOUR_ID_LABEL]):
+                connected = True
+                break
+
+        if(not connected):
+            user1List.append({
+                self.NEIGHBOUR_ID_LABEL: userid1,
+                self.NEIGHBOUR_RELATIONSHIP_LABEL: relationship,
+                self.NEIGHBOUR_ALIAS_LABEL: alias,
+            })
+            userToUserCollection.document(
+                userid1).set({self.USER_NEIGHBOUR_LABEL: user1List})
+
+    def addUserUserEdge(self, userid1: str, userid2: str, relationship: str, alias: str = "No alias") -> None:
+        """Adds an user-user edge to the user-to-user DB (updates adjacency lists)
+        Does nothing if they are alredy connected.
+        This needs a relationship and alias label for the edge.
         """
-        Delets a user1, user2 edge in the DB.
+        self.addDirectedUsertoUserEdge(userid1, userid2, relationship, alias)
+        self.addDirectedUsertoUserEdge(userid2, userid1, relationship, alias)
+
+    def removeUsertoUserDirectedEdge(self, userid1: str, userid2: str) -> None:
+        """Removes an user-user edge directed the user-to-user DB (updates adjacency list).
+        More specifically, it removes user2 from the adjacency list of user1.
+        Does nothing if they are not connected.
         """
-        # Remove userid2 from userid1.
-        user1_neighbours = self.getUserNeighbours(userid1)
 
-        if(str(userid2) in user1_neighbours.keys()):
-            user1_neighbours.pop(str(userid2))
-            self.userToUserCollection.document(str(userid1)).set(
-                {"Neighbours": user1_neighbours})
+        user1List = self.getNeighbours(userid1)
+        connected = False
+        for i in range(len(user1List)):
+            if(userid2 == user1List[i][self.NEIGHBOUR_ID_LABEL]):
+                connected = True
+                break
 
-        # Remove userid1 from userid2.
-        user2_neighbours = self.getUserNeighbours(userid2)
+        if(connected):
+            user1List.remove(userid2)
+            userToUserCollection.document(
+                userid1).set({self.USER_NEIGHBOUR_LABEL: user1List})
 
-        if(str(userid1) in user2_neighbours.keys()):
-            user2_neighbours.pop(str(userid1))
-            self.userToUserCollection.document(str(userid2)).set(
-                {"Neighbours": user2_neighbours})
-
-    def printAllUsers(self) -> None:
+    def removeUsertoUserEdge(self, userid1: str, userid2: str) -> None:
+        """Removes an user-user edge to the user-to-user DB (updates adjacency lists)
+        Does nothing if they are not connected.
         """
-        Print all users and nodes registered.
-        """
-        for doc in self.userToUserCollection.get():
-            print(f'{doc.id} => {doc.to_dict()}')
+        
+        self.removeUsertoUserDirectedEdge(userid1, userid2)
+        self.removeUsertoUserDirectedEdge(userid2, userid1)
 
-    def getAllUserVertices(self) -> List[str]:
-        """
-        Get all users registered in the User-to-User Graph DB.
-        """
-        return [doc.id for doc in self.userToUserCollection.get()]
+    # Utils
+    def getNeighbours(self, userid: str) -> List[Dict[str, str]]:
+        """Get all neighbours of a user in the user-to-user database."""
+        return userToUserCollection.document(userid).get().to_dict()[self.USER_NEIGHBOUR_LABEL]
 
-    def getUserNeighbours(self, userid: int) -> Dict[str, str]:
-        """
-        Get all neighbours (users that this user is currently talking to)
-        """
-        return self.userToUserCollection.document(str(userid)).get().to_dict()['Neighbours']
+    def getAllUsers(self) -> List[str]:
+        """Get a list of all users in the user-to-user database."""
+        return [document.id for document in userToUserCollection.get()]
+
+    def printUsertoUserDB(self) -> None:
+        """Prints all documents in the user-to-user """
+        print(
+            *[f"\n{document.id} => {document.to_dict()}" for document in userToUserCollection.get()])
+
+    def __resetDB(self) -> None:
+        """DANGER: Resets ENTIRE firebase user-to-user """
+        for user in self.getAllUsers():
+            self.removeUser(user)
 
 
-fs = FireStoreManager()
-fs.printAllUsers()
-# print(fs.getAllUserVertices())
-fs.registerUserVertice(1234)
-fs.registerUserVertice(12345)
-fs.registerUserVertice(123456)
-fs.registerUserEdge(1234, 12345)
-fs.registerUserEdge(12345, 123456)
-print(fs.getUserNeighbours(12345))
+class GraphHandler(_UserModuleGraphHandler, _UserUserGraphHandler):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def addUser(self, userid: str):
+        _UserModuleGraphHandler().addUser(userid)
+        _UserUserGraphHandler().addUser(userid)
+
+    def removeUser(self, userid: str) -> None:
+        _UserModuleGraphHandler().removeUser(userid)
+        _UserUserGraphHandler().removeUser(userid)
+
+
+if __name__ == '__main__':
+    pass
