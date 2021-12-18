@@ -6,7 +6,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 cred = credentials.Certificate(
-    "src\keys\makerthon-2022-9a97e-firebase-adminsdk-qniun-0539fb076e.json")
+    "src/keys/makerthon-2022-9a97e-firebase-adminsdk-qniun-0539fb076e.json")
 firebase_admin.initialize_app(cred)
 db = firestore.client()  # this connects to our Firestore database
 
@@ -22,13 +22,18 @@ class _UserModuleGraphHandler():
     """
     Handler for managing two FireStore databases, Module-to-User and User-to-Module DBs.
     Simulates a bipartite graph connecting users to modules with adjacency lists.
+
+    The edges of the graph is labelled with:
+    1. Relationship - is the way in which they are matchmaked together (e.g. Module MA1121)
+    2. Alias - is what one user is known to the other. To simplify things, both directed edges share the same
+    alias. This doesn't compromise anything, so idt it's actually an issue.
     """
 
     # Label for user adjacency list
-    USER_NEIGHBOUR_LABEL = "Modules"
+    __USER_NEIGHBOUR_LABEL = "Modules"
 
     # Label for module adjacency list
-    MODULE_NEIGHBOUR_LABEL = "Users"
+    __MODULE_NEIGHBOUR_LABEL = "Users"
 
     def __init__(self) -> None:
         pass
@@ -40,7 +45,7 @@ class _UserModuleGraphHandler():
         Does nothing if the user already exists."""
         if(not userToModuleCollection.document(userid).get().exists):
             userToModuleCollection.document(
-                userid).set({self.USER_NEIGHBOUR_LABEL: []})
+                userid).set({self.__USER_NEIGHBOUR_LABEL: []})
 
     def removeUser(self, userid: str) -> None:
         """Removes the user from the "user-to-module" database."""
@@ -54,7 +59,7 @@ class _UserModuleGraphHandler():
         Does nothing if the module already exists."""
         if(not moduleToUserCollection.document(moduleCode).get().exists):
             moduleToUserCollection.document(moduleCode).set(
-                {self.MODULE_NEIGHBOUR_LABEL: []})
+                {self.__MODULE_NEIGHBOUR_LABEL: []})
 
     def removeModule(self, moduleCode: str) -> None:
         """Removes a module in the module-to-user database."""
@@ -71,7 +76,7 @@ class _UserModuleGraphHandler():
         if(not moduleCode in modules):
             modules.append(moduleCode)
             userToModuleCollection.document(
-                userid).set({self.USER_NEIGHBOUR_LABEL: modules})
+                userid).set({self.__USER_NEIGHBOUR_LABEL: modules})
 
     def removeUsertoModuleDirectedEdge(self, userid: str, moduleCode: str) -> None:
         """Removes a user-module edge in the user-to-module 
@@ -81,7 +86,7 @@ class _UserModuleGraphHandler():
         if(moduleCode in modules):
             modules.remove(moduleCode)
             userToModuleCollection.document(
-                userid).set({self.USER_NEIGHBOUR_LABEL: modules})
+                userid).set({self.__USER_NEIGHBOUR_LABEL: modules})
 
     def addModuletoUserDirectedEdge(self, userid: str, moduleCode: str) -> None:
         """Adds a user-module edge in the module-to-user 
@@ -91,7 +96,7 @@ class _UserModuleGraphHandler():
         if(not userid in users):
             users.append(userid)
             moduleToUserCollection.document(
-                moduleCode).set({self.MODULE_NEIGHBOUR_LABEL: users})
+                moduleCode).set({self.__MODULE_NEIGHBOUR_LABEL: users})
 
     def removeModuletoUserDirectedEdge(self, userid: str, moduleCode: str) -> None:
         """Removes a user-module edge in the module-to-user 
@@ -101,7 +106,7 @@ class _UserModuleGraphHandler():
         if(userid in users):
             users.remove(userid)
             moduleToUserCollection.document(
-                moduleCode).set({self.MODULE_NEIGHBOUR_LABEL: users})
+                moduleCode).set({self.__MODULE_NEIGHBOUR_LABEL: users})
 
     def addUserModuleEdge(self, userid: str, moduleCode: str) -> None:
         """Adds a user-module edge in both the module-to-user and user-to-module """
@@ -123,22 +128,21 @@ class _UserModuleGraphHandler():
         for module in moduleCodes:
             if not(module in currentModules):
                 self.addUserModuleEdge(userid, module)
-        
+
         for module in currentModules:
             if not(module in moduleCodes):
                 self.removeUserModuleEdge(userid, module)
-
 
     # Utils
 
     def getUserModules(self, userid: str) -> List[str]:
         """Returns a list of the modules the user takes."""
         return userToModuleCollection.document(
-            userid).get().to_dict()[self.USER_NEIGHBOUR_LABEL]
+            userid).get().to_dict()[self.__USER_NEIGHBOUR_LABEL]
 
     def getModuleUsers(self, moduleCode: str) -> List[str]:
         """Returns a list of users that is enrolled in the module."""
-        return moduleToUserCollection.document(moduleCode).get().to_dict()[self.MODULE_NEIGHBOUR_LABEL]
+        return moduleToUserCollection.document(moduleCode).get().to_dict()[self.__MODULE_NEIGHBOUR_LABEL]
 
     def printUserToModuleDB(self) -> None:
         """Prints all documents in the user-to-module """
@@ -165,7 +169,8 @@ class _UserUserGraphHandler():
     }
     """
     # Label for list of users
-    USER_NEIGHBOUR_LABEL = "Neighbours"
+    # For some reason if i dont make this private it goes to the other one instead? TODO Ask stack overflow
+    USER_USER_NEIGHBOUR_LABEL = "Neighbours"
 
     # Labels for each neighbour's id
     NEIGHBOUR_ID_LABEL = "ID"
@@ -173,7 +178,7 @@ class _UserUserGraphHandler():
     NEIGHBOUR_RELATIONSHIP_LABEL = "Relationship"
     # Labels for anonymous alias to neighbour
     NEIGHBOUR_ALIAS_LABEL = "Alias"
-    
+
     def __init__(self) -> None:
         pass
 
@@ -182,14 +187,14 @@ class _UserUserGraphHandler():
         Does nothing if the user already exists."""
         if(not userToUserCollection.document(userid).get().exists):
             userToUserCollection.document(userid).set(
-                {self.USER_NEIGHBOUR_LABEL: []})
+                {self.USER_USER_NEIGHBOUR_LABEL: []})
 
     def removeUser(self, userid: str) -> None:
         """Deletes a user from the user-to-user 
         TODO: Room for optimisation here, this tries to delete from params(userid) when it will be deleted anyways."""
         userList = self.getNeighbours(userid)
         for user in userList:
-            self.removeUsertoUserEdge(userid, user)
+            self.removeUsertoUserEdge(userid, user[self.NEIGHBOUR_ID_LABEL])
         userToUserCollection.document(userid).delete()
 
     def addDirectedUsertoUserEdge(self, userid1: str, userid2: str, relationship: str, alias: str) -> None:
@@ -206,12 +211,12 @@ class _UserUserGraphHandler():
 
         if(not connected):
             user1List.append({
-                self.NEIGHBOUR_ID_LABEL: userid1,
+                self.NEIGHBOUR_ID_LABEL: userid2,
                 self.NEIGHBOUR_RELATIONSHIP_LABEL: relationship,
                 self.NEIGHBOUR_ALIAS_LABEL: alias,
             })
             userToUserCollection.document(
-                userid1).set({self.USER_NEIGHBOUR_LABEL: user1List})
+                userid1).set({self.USER_USER_NEIGHBOUR_LABEL: user1List})
 
     def addUserUserEdge(self, userid1: str, userid2: str, relationship: str, alias: str = "No alias") -> None:
         """Adds an user-user edge to the user-to-user DB (updates adjacency lists)
@@ -227,30 +232,37 @@ class _UserUserGraphHandler():
         Does nothing if they are not connected.
         """
 
-        user1List = self.getNeighbours(userid1)
-        connected = False
-        for i in range(len(user1List)):
-            if(userid2 == user1List[i][self.NEIGHBOUR_ID_LABEL]):
-                connected = True
-                break
+        neighbourList = self.getNeighbours(userid1)
+        for neighbour in neighbourList:
+            if(userid2 == neighbour[self.NEIGHBOUR_ID_LABEL]):
 
-        if(connected):
-            user1List.remove(userid2)
-            userToUserCollection.document(
-                userid1).set({self.USER_NEIGHBOUR_LABEL: user1List})
+                neighbourList.remove(neighbour)
+                userToUserCollection.document(
+                    userid1).set({self.USER_USER_NEIGHBOUR_LABEL: neighbourList})
+                break
 
     def removeUsertoUserEdge(self, userid1: str, userid2: str) -> None:
         """Removes an user-user edge to the user-to-user DB (updates adjacency lists)
         Does nothing if they are not connected.
         """
-        
+
         self.removeUsertoUserDirectedEdge(userid1, userid2)
         self.removeUsertoUserDirectedEdge(userid2, userid1)
 
     # Utils
     def getNeighbours(self, userid: str) -> List[Dict[str, str]]:
         """Get all neighbours of a user in the user-to-user database."""
-        return userToUserCollection.document(userid).get().to_dict()[self.USER_NEIGHBOUR_LABEL]
+        # print(userToUserCollection.document(userid).get().to_dict())
+        return userToUserCollection.document(userid).get().to_dict()[self.USER_USER_NEIGHBOUR_LABEL]
+
+    def getEdge(self, userid1: str, userid2: str) -> Dict[str, str]: #type: ignore
+        """Returns the directed edge from userid1 to userid2.
+        More specifically, this returns the edge user1 -> user2, which is stored in the adjacency list of user1."""
+        neighbours = self.getNeighbours(userid=userid1)
+
+        for neighbour in neighbours:
+            if(neighbour[self.NEIGHBOUR_ID_LABEL] == userid2):
+                return neighbour
 
     def getAllUsers(self) -> List[str]:
         """Get a list of all users in the user-to-user database."""
@@ -281,4 +293,9 @@ class GraphHandler(_UserModuleGraphHandler, _UserUserGraphHandler):
 
 
 if __name__ == '__main__':
+    userGraph = _UserUserGraphHandler()
+    userGraph.addUser("1")
+    userGraph.addUser("2")
+    userGraph.addUserUserEdge("1", "2", "test")
+    userGraph.addUserUserEdge("1", "2", "test2")
     pass

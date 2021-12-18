@@ -132,3 +132,5 @@ dmypy.json
 keys/
 # User Data
 userdata/
+# User chat_cache
+chatCache.json
