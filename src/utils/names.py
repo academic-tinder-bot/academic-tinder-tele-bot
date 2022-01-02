@@ -13,4 +13,4 @@ with open('src/utils/name_list.csv') as csv_file:
     list_of_first_names = [name[0].split(" ")[0] for name in list(csv_reader)]
 
 def randomAnonName() -> str:
-    return "Anon " + random.choice(list_of_first_names)
+    return random.choice(list_of_first_names)

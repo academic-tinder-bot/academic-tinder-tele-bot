@@ -13,7 +13,7 @@ class ChatCacheHandler:
     Messages are added on to the file as a queue using append(), and then when called,
     and then removed in order of left to right.
     """
-    CACHE_DATA: Dict[str, Dict[str, List[str]]]= {}
+    CACHE_DATA: Dict[str, Dict[str, List[str]]] = {}
 
     @classmethod
     def get_cache_data(cls):
@@ -27,7 +27,8 @@ class ChatCacheHandler:
         """
         Write the cache data to the json file.
         """
-        json.dump(cls.CACHE_DATA, open("src/database/cache/chatCache.json", "w"))
+        json.dump(cls.CACHE_DATA, open(
+            "src/database/cache/chatCache.json", "w"), indent=4)
 
     @classmethod
     def addUser(cls, userid: str):
@@ -37,7 +38,7 @@ class ChatCacheHandler:
             return
         cls.CACHE_DATA[userid] = {}
         cls.write_cache_data()
-    
+
     @classmethod
     def deleteUser(cls, userid: str):
         """Delete a user (dict) from the cache. Does nothing if the user is not in the cache."""
@@ -79,7 +80,7 @@ class ChatCacheHandler:
             messages = cls.CACHE_DATA[recepient][sender]
             cls.CACHE_DATA[recepient].pop(sender)
             cls.write_cache_data()
-        except KeyError: 
+        except KeyError:
             messages = []
         return messages
 
@@ -95,7 +96,7 @@ class ChatCacheHandler:
             cls.CACHE_DATA[recepient][sender].append(message)
             print(cls.CACHE_DATA[recepient][sender])
         cls.write_cache_data()
-    
+
     @classmethod
     def countUnreadMessages(cls, recepient: str) -> Dict[str, int]:
         """Returns a dictionary that counts all unread messages, with 
@@ -104,6 +105,7 @@ class ChatCacheHandler:
         for (sender, messages) in cls.getAllMessages(recepient).items():
             returnDict[sender] = len(messages)
         return returnDict
+
 
 if (__name__ == "__main__"):
     cache = ChatCacheHandler()

@@ -25,8 +25,6 @@ class _UserModuleGraphHandler():
 
     The edges of the graph is labelled with:
     1. Relationship - is the way in which they are matchmaked together (e.g. Module MA1121)
-    2. Alias - is what one user is known to the other. To simplify things, both directed edges share the same
-    alias. This doesn't compromise anything, so idt it's actually an issue.
     """
 
     # Label for user adjacency list
@@ -164,7 +162,6 @@ class _UserUserGraphHandler():
         {   
             name: NAME
             relationship: RELATIONSHIP
-            alias: ALIAS
         }
     }
     """
@@ -176,8 +173,6 @@ class _UserUserGraphHandler():
     NEIGHBOUR_ID_LABEL = "ID"
     # Labels for relationship to neighbour
     NEIGHBOUR_RELATIONSHIP_LABEL = "Relationship"
-    # Labels for anonymous alias to neighbour
-    NEIGHBOUR_ALIAS_LABEL = "Alias"
 
     def __init__(self) -> None:
         pass
@@ -197,10 +192,10 @@ class _UserUserGraphHandler():
             self.removeUsertoUserEdge(userid, user[self.NEIGHBOUR_ID_LABEL])
         userToUserCollection.document(userid).delete()
 
-    def addDirectedUsertoUserEdge(self, userid1: str, userid2: str, relationship: str, alias: str) -> None:
+    def addDirectedUsertoUserEdge(self, userid1: str, userid2: str, relationship: str) -> None:
         """Add a directed edge from user1 to user2. More specifically, this
         adds user2 to the adjacency list of user1.
-        This needs a relationship and alias label for the edge."""
+        This needs a relationship label for the edge."""
         user1List = self.getNeighbours(userid1)
 
         connected = False
@@ -212,19 +207,18 @@ class _UserUserGraphHandler():
         if(not connected):
             user1List.append({
                 self.NEIGHBOUR_ID_LABEL: userid2,
-                self.NEIGHBOUR_RELATIONSHIP_LABEL: relationship,
-                self.NEIGHBOUR_ALIAS_LABEL: alias,
+                self.NEIGHBOUR_RELATIONSHIP_LABEL: relationship
             })
             userToUserCollection.document(
                 userid1).set({self.USER_USER_NEIGHBOUR_LABEL: user1List})
 
-    def addUserUserEdge(self, userid1: str, userid2: str, relationship: str, alias: str = "No alias") -> None:
+    def addUserUserEdge(self, userid1: str, userid2: str, relationship: str) -> None:
         """Adds an user-user edge to the user-to-user DB (updates adjacency lists)
         Does nothing if they are alredy connected.
-        This needs a relationship and alias label for the edge.
+        This needs a relationship label for the edge.
         """
-        self.addDirectedUsertoUserEdge(userid1, userid2, relationship, alias)
-        self.addDirectedUsertoUserEdge(userid2, userid1, relationship, alias)
+        self.addDirectedUsertoUserEdge(userid1, userid2, relationship)
+        self.addDirectedUsertoUserEdge(userid2, userid1, relationship)
 
     def removeUsertoUserDirectedEdge(self, userid1: str, userid2: str) -> None:
         """Removes an user-user edge directed the user-to-user DB (updates adjacency list).
@@ -255,7 +249,8 @@ class _UserUserGraphHandler():
         # print(userToUserCollection.document(userid).get().to_dict())
         return userToUserCollection.document(userid).get().to_dict()[self.USER_USER_NEIGHBOUR_LABEL]
 
-    def getEdge(self, userid1: str, userid2: str) -> Dict[str, str]: #type: ignore
+    
+    def getEdge(self, userid1: str, userid2: str) -> Dict[str, str]: # type: ignore
         """Returns the directed edge from userid1 to userid2.
         More specifically, this returns the edge user1 -> user2, which is stored in the adjacency list of user1."""
         neighbours = self.getNeighbours(userid=userid1)

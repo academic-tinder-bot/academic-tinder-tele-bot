@@ -1,25 +1,31 @@
-
+#pylint: disable=line-too-long, superfluous-parens, missing-function-docstring, trailing-whitespace, invalid-name
 from __future__ import annotations
 from enum import Enum
 
 import logging
+
+from random import Random
+from datetime import datetime
+
 from typing import Any, Dict, List
 from telegram import Update
 import telegram
 from telegram.ext import CommandHandler, CallbackQueryHandler, PicklePersistence
 from telegram.ext.jobqueue import JobQueue
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.parsemode import ParseMode
 from database.cache.chat_cache_handler import ChatCacheHandler
 from database.firebase_handler import GraphHandler
 from telegram.ext import *
 
 import re
 import json
+from database.userconfig_handler import UserSettings
 
-from random import Random
-from datetime import datetime
+from utils import names
 
-from database.userdata_handler import registerUser, getUserData
+
+# from database.userdata_handler import registerUser, getUserData
 from utils.names import randomAnonName
 
 
@@ -39,7 +45,7 @@ class UserDataKey(Enum):
     CHAT_ALIAS = 'Alias'         # -> str
     CURRENT_CHAT_ID = 'ID'               # -> str
     CHAT_CACHE = 'Cache'         # -> List[str]
-    CHAT_RELATIONSHIP = 'Relationship' # -> str
+    CHAT_RELATIONSHIP = 'Relationship'  # -> str
 
 
 class BotDataKey(Enum):
@@ -60,23 +66,72 @@ class BotDataKey(Enum):
 class TeleBot:
     """
     Class that handles all telegram bot implementation.
-    Classic case of unnecessary OOP"""
+    Classic case of unnecessary (but convenient) OOP"""
 
     def start(self, update: Update, context: CallbackContext):
         """Function called with /start. Chat id is logged as an identifier.
         """
         # registerUser(name=update.effective_chat.first_name,
         #              handle=update.effective_chat.username, chatid=update.effective_chat.id)
-        self.firebaseManager.addUser(str(update.effective_chat.id))
-        update.message.reply_text(self.main_menu_message())
+        userid = update.effective_chat.id
+        self.firebaseManager.addUser(str(userid))
 
+        context.bot.send_message(
+            chat_id=userid,
+            text="Hi! I am a Telegram bot to match you anonymously to your fellow coursemates. Let's get started!")
+        context.bot.send_message(
+            chat_id=userid,
+            text="Enter your alias (leave blank to generate a random one)")
+
+        return 100
+
+    def chooseAlias(self, update: Update, context: CallbackContext):
+        userid = update.effective_chat.id
+        message = update.message.text
+
+        if(message == "/random"):
+            # TODO: Generate a random alias
+            alias = names.randomAnonName()
+        else:
+            # TODO: alias is the message
+            alias = "message"
+
+        UserSettings.setAlias(userid, alias)
+        context.bot.send_message(
+            chat_id=userid,
+            text=f"Your alias is {alias}."
+        )
+        context.bot.send_message(
+            chat_id=userid,
+            text="This bot help to match you to your classmates (in the same course) anonymously!"
+        )
+        context.bot.send_message(
+            chat_id=userid,
+            text="Enter the modules you are taking this semester! This list can be changed after with /regmodule and /delmodule."
+        )
+
+        return self.startRegModules(update, context)
+
+    def startConvoHandler(self):
+        return ConversationHandler(
+            entry_points=[CommandHandler('start', self.start)],
+            states={
+                100: [MessageHandler(Filters.text, self.chooseAlias)],
+                101: [CommandHandler('exit', self.exitRegModulebyCommand),
+                    MessageHandler(Filters.text, self.continueRegModules),
+                    CallbackQueryHandler(
+                        self.exitRegModulebyButton, pattern="exit_register_module"),
+                    ]
+            },
+            fallbacks=[]
+        )
     ##### Registering module(s) (in convohandler!) #####
 
     def startRegModules(self, update: Update, context: CallbackContext):
         self.updateUserModuleCache(update.effective_chat.id, context.user_data)
         update.message.reply_text(
             self.register_module_message(update.effective_chat.id, context.user_data), reply_markup=self.register_message_keyboard())
-        return 0
+        return 101
 
     def continueRegModules(self, update: Update, context: CallbackContext):
         message = update.message.text
@@ -89,30 +144,62 @@ class TeleBot:
                     (message.upper()))
             update.message.reply_text(
                 self.register_module_message(update.effective_chat.id, context.user_data), reply_markup=self.register_message_keyboard())
-
+    
+    
         # Invalid Module Code
         else:
             update.message.reply_text("Unknown Module Code!\n" +
-                                      self.register_module_message(update.effective_chat.id, context.user_data))
+                                      self.register_module_message(update.effective_chat.id, context.user_data), reply_markup=self.register_message_keyboard())
 
-        return 0
+        return 101
 
-    def exitRegModule(self, update: Update, context: CallbackContext):
+    def exitRegModulebyButton(self, update: Update, context: CallbackContext):
         query = update.callback_query
 
-        query.message.edit_text(self.register_module_end_message_1())
+        query.message.edit_text("Registering Modules...")
         modules = context.user_data[UserDataKey.USER_MODULES]
         # TODO This is inefficient
         for module in modules:
             self.firebaseManager.addUserModuleEdge(
                 userid=str(update.effective_chat.id), moduleCode=module)
-        context.user_data[UserDataKey.USER_MODULES].pop(
-            str(update.effective_chat.id))
+        context.user_data.pop(UserDataKey.USER_MODULES)
 
         query.answer()
-        query.message.edit_text(self.register_module_end_message_2())
+        query.message.edit_text("Registered Modules!")
         return ConversationHandler.END
 
+    def exitRegModulebyCommand(self, update: Update, context: CallbackContext):
+
+        context.bot.send_message(
+            chat_id=update.effective_chat.id, text="Registering Modules...")
+        modules = context.user_data[UserDataKey.USER_MODULES]
+        # TODO This is inefficient
+        for module in modules:
+            self.firebaseManager.addUserModuleEdge(
+                userid=str(update.effective_chat.id), moduleCode=module)
+        print(context.user_data)
+        context.user_data.pop(UserDataKey.USER_MODULES)
+
+        context.bot.send_message(
+            chat_id=update.effective_chat.id, text="Registered Modules!")
+        return ConversationHandler.END
+    
+    def register_module_message(self, chatid, user_data):
+        modules = user_data[UserDataKey.USER_MODULES]
+        returnString = "Type the module codes here one by one.\nRegistered Modules:\n\n"
+        for i in range(len(modules)):
+            returnString += "{i}. {moduleCode}\n".format(
+                i=i+1, moduleCode=modules[i])
+        return returnString
+
+    def register_message_keyboard(self):
+        keyboard = [[InlineKeyboardButton(
+            "exit", callback_data="exit_register_module")]]
+        return InlineKeyboardMarkup(keyboard)
+    
+    def register_module_keyboard(self):
+        keyboard = [[InlineKeyboardButton("exit", callback_data="exit")]]
+        return InlineKeyboardMarkup(keyboard)
     ##### Deleting Modules #####
 
     def startDelModule(self, update: Update, context: CallbackContext):
@@ -142,6 +229,13 @@ class TeleBot:
 
         return 0
 
+    def exitDelModule(self, update: Update, context: CallbackContext):
+        self.firebaseManager.updateUserModules(
+            userid=str(update.effective_chat.id), moduleCodes=context.user_data[UserDataKey.USER_MODULES])
+        context.bot.send_message(
+            chatid=update.effective_chat.id, message="Exited!")
+        return ConversationHandler.END
+
     ##### Chat! #####
     def startChatMenu(self, update: Update, context: CallbackContext):
         # print("startChatMenu")
@@ -165,13 +259,14 @@ class TeleBot:
         # print(unreadMessageCount)
         for i in range(len(neighbours)):
             neighbour = neighbours[i]
-            relationship = neighbour[GraphHandler.NEIGHBOUR_RELATIONSHIP_LABEL]
-            alias = neighbour[GraphHandler.NEIGHBOUR_ALIAS_LABEL]
             id = neighbour[GraphHandler.NEIGHBOUR_ID_LABEL]
-
+            relationship = neighbour[GraphHandler.NEIGHBOUR_RELATIONSHIP_LABEL]
+            alias = UserSettings.getAlias(id)
             # Get number of unread Messages
-            try: count = unreadMessageCount[id]
-            except KeyError: count = 0
+            try:
+                count = unreadMessageCount[id]
+            except KeyError:
+                count = 0
 
             resultStr += f"{relationship}\t{alias}\t{count}"
             keyboard.append([InlineKeyboardButton(
@@ -190,30 +285,32 @@ class TeleBot:
 
         # Continuing a previous chat
         callBackData = update.callback_query.data
-        
+
         if(callBackData.find("start_chatid") != -1):
             query = update.callback_query
             chatid = callBackData.removeprefix("start_chatid")
 
             query.message.edit_text(
-                f"Connecting you with user {chatid}...")
+                f"Connecting you with user {UserSettings.getAlias(chatid)}...")
 
-            edge = self.firebaseManager.getEdge(str(update.effective_chat.id), str(chatid))
+            edge = self.firebaseManager.getEdge(
+                str(update.effective_chat.id), str(chatid))
 
             context.user_data[UserDataKey.CURRENT_CHAT_ID] = chatid
-            context.user_data[UserDataKey.CHAT_ALIAS] = edge[GraphHandler.NEIGHBOUR_ALIAS_LABEL]
+            context.user_data[UserDataKey.CHAT_ALIAS] = UserSettings.getAlias(update.effective_chat.id)
             context.user_data[UserDataKey.CHAT_RELATIONSHIP] = edge[GraphHandler.NEIGHBOUR_RELATIONSHIP_LABEL]
-            
+
             # Update chat log data
-            self.bot_data[BotDataKey.TALKING_TO][str(update.effective_chat.id)] = chatid
+            self.bot_data[BotDataKey.TALKING_TO][str(
+                update.effective_chat.id)] = chatid
 
             query.message.edit_text(
-                f"Connected you with user {chatid}!")
-
+                f"Connected you with user {chatid}! Type /exit to exit chat.")
 
             # Send all unread messages
             for message in self.chatCache.popMessagesFromUser(str(update.effective_chat.id), str(chatid)):
-                context.bot.send_message(text=message, chat_id = update.effective_chat.id)
+                context.bot.send_message(
+                    text=message, chat_id=update.effective_chat.id)
             return 1
 
         # Starting a new module chat
@@ -240,16 +337,14 @@ class TeleBot:
                 userMatch = Random().choice(potentialUsers)
             except(IndexError):
                 query.message.edit_text(
-                    "No valid users to match! Maybe you're currently talking to all of them. Try /currentchats instead!"
+                    "No valid users to match! Maybe you're currently talking to all of them. Try /chats instead!"
                 )
                 return -1
-
-            alias = randomAnonName()
 
             query.message.edit_text(
                 "Connecting you with user {}!".format(userMatch))
             self.firebaseManager.addUserUserEdge(userid1=str(
-                chatid), userid2=userMatch, relationship=modulecode, alias=alias)
+                chatid), userid2=userMatch, relationship=modulecode)
 
             # TODO: Try to delay the second message
             # delayed_message = lambda context: query.message.edit_text("Connecting you with user {}!".format(userMatch))
@@ -258,23 +353,32 @@ class TeleBot:
             # context.bot.send_message(
             #     chat_id=update.effective_chat.id, text="Connecting you with user {}!".format(userMatch))
             context.user_data[UserDataKey.CURRENT_CHAT_ID] = userMatch
-            context.user_data[UserDataKey.CHAT_ALIAS] = alias
+            context.user_data[UserDataKey.CHAT_ALIAS] = UserSettings.getAlias(update.effective_chat.id)
             context.user_data[UserDataKey.CHAT_RELATIONSHIP] = modulecode
 
             # Update chat log data
-            self.bot_data[BotDataKey.TALKING_TO][str(update.effective_chat.id)] = userMatch
+            self.bot_data[BotDataKey.TALKING_TO][str(
+                update.effective_chat.id)] = userMatch
 
             query.message.edit_text(
-                "Connected you with user {}!".format(userMatch))
-            context.bot.send_message(chat_id=userMatch, text="A user connected to you from {}".format(modulecode))
-            print("User Matched: {} to {}".format(update.effective_chat.id, userMatch))
+                "Connected you with user {}! Type /exit to exit chat.".format(userMatch))
+            context.bot.send_message(
+                chat_id=userMatch, text="A user connected to you from {}".format(modulecode))
+            print("User Matched: {} to {}".format(
+                update.effective_chat.id, userMatch))
 
             return 1
         pass
 
     def exitChatHandler(self, update: Update, context: CallbackContext):
         update.message.reply_text("Exiting Chat!")
-        self.bot_data[BotDataKey.TALKING_TO].pop(str(update.effective_chat.id))
+
+        # TODO: Hacky solution, but whatever
+        try:
+            self.bot_data[BotDataKey.TALKING_TO].pop(
+                str(update.effective_chat.id))
+        except KeyError:
+            pass
         return ConversationHandler.END
 
     def chatHandler(self, update: Update, context: CallbackContext):
@@ -291,21 +395,21 @@ class TeleBot:
 
         time = datetime.now().strftime('%H:%M')
 
-        msg_final = ("`{alias} {time}` \n{message}".format(
+        msg_final = ("{alias} {time} \n{message}".format(
             alias=alias, time=time, message=message))
-        
+
         if(self.isInChat(userid, chatid)):
-            update.message.reply_text(
-                f"Sending message to {userid}: \n\n{msg_final}", parse_mode=telegram.ParseMode.MARKDOWN_V2)
+            # update.message.reply_text(
+            #     f"DEBUG: Sending message to {userid}: \n\n{msg_final}", parse_mode=telegram.ParseMode.MARKDOWN_V2)
             context.bot.send_message(
-                chat_id=userid, text=f"{message}", parse_mode=telegram.ParseMode.MARKDOWN_V2)
+                chat_id=userid, text=f"{msg_final}", parse_mode=telegram.ParseMode.MARKDOWN_V2)
         else:
             self.chatCache.addChatMessage(userid, chatid, msg_final)
-            update.message.reply_text(
-                f"Archiving message to {userid}: \n\n{msg_final}", parse_mode=telegram.ParseMode.MARKDOWN_V2)
-            
+            # update.message.reply_text(
+            #     f"DEBUG: Caching message to {userid}: \n\n{msg_final}", parse_mode=telegram.ParseMode.MARKDOWN_V2)
+
             context.bot.send_message(
-                chat_id=userid, text=f"{alias} from {relationship} just sent you a message\\!\nGo to /currenchats to see their message\\!", parse_mode=telegram.ParseMode.MARKDOWN_V2)
+                chat_id=userid, text=f"{alias} from {relationship} just sent you a message\\!\nGo to /chats to see their message\\!", parse_mode=telegram.ParseMode.MARKDOWN_V2)
 
         return 1
 
@@ -324,22 +428,9 @@ class TeleBot:
         return text
     ########## MESSAGES ##########
 
-    def main_menu_message(self):
-        return "Welcome!"
+    
 
-    def register_module_message(self, chatid, user_data):
-        modules = user_data[UserDataKey.USER_MODULES]
-        returnString = "Type the module codes here one by one.\nRegistered Modules:\n\n"
-        for i in range(len(modules)):
-            returnString += "{i}. {moduleCode}\n".format(
-                i=i+1, moduleCode=modules[i])
-        return returnString
 
-    def register_module_end_message_1(self):
-        return "Registering Modules..."
-
-    def register_module_end_message_2(self):
-        return "Registered Modules!"
 
     def delete_module_message(self, chatid, user_data):
         modules = user_data[UserDataKey.USER_MODULES]
@@ -372,10 +463,7 @@ class TeleBot:
                     [InlineKeyboardButton('See settings', callback_data='settings')]]
         return InlineKeyboardMarkup(keyboard)
 
-    def register_message_keyboard(self):
-        keyboard = [[InlineKeyboardButton(
-            "exit", callback_data="exit_register_module")]]
-        return InlineKeyboardMarkup(keyboard)
+
 
     def delete_message_keyboard(self, chatid, user_data):
         modules = user_data[UserDataKey.USER_MODULES]
@@ -385,9 +473,7 @@ class TeleBot:
             "exit", callback_data="exit_remove_module")])
         return InlineKeyboardMarkup(keyboard)
 
-    def register_module_keyboard(self):
-        keyboard = [[InlineKeyboardButton("exit", callback_data="exit")]]
-        return InlineKeyboardMarkup(keyboard)
+
 
     def start_chat_menu_keyboard(self, chatid: int, user_data):
         modules = user_data[UserDataKey.USER_MODULES]
@@ -416,15 +502,20 @@ class TeleBot:
 
         ########## HANDLERS ##########
 
-        self.dispatcher.add_handler(CommandHandler('start', self.start))
+        self.dispatcher.add_handler(self.startConvoHandler())
+
+        # self.dispatcher.add_handler(CommandHandler('start', self.start))
 
         # Register Module
         # TODO: I should actually use a set for this, but whatever
         regModuleConvoHandler = ConversationHandler(
             entry_points=[CommandHandler('regmodule', self.startRegModules)],
             states={
-                0: [MessageHandler(Filters.text, self.continueRegModules),
-                    CallbackQueryHandler(self.exitRegModule, pattern="exit_register_module")]
+                101: [CommandHandler('exit', self.exitRegModulebyCommand),
+                    MessageHandler(Filters.text, self.continueRegModules),
+                    CallbackQueryHandler(
+                        self.exitRegModulebyButton, pattern="exit_register_module"),
+                    ]
             },
             fallbacks=[]
         )
@@ -435,7 +526,9 @@ class TeleBot:
             entry_points=[CommandHandler('delmodule', self.startDelModule)],
             states={
                 0: [CallbackQueryHandler(self.continueDelModule, pattern="module_remove"),
-                    CallbackQueryHandler(self.continueDelModule, pattern="exit_remove_module")]
+                    CallbackQueryHandler(
+                        self.continueDelModule, pattern="exit_remove_module"),
+                    CommandHandler('exit', self.exitDelModule)]
             },
             fallbacks=[]
         )
@@ -443,11 +536,11 @@ class TeleBot:
 
         # Handle Chat
         # /startChat --> Select module --> 10 go into chat
-        # /currentChat --> Select Chat --> 10 go into chat
+        # /Chat --> Select Chat --> 10 go into chat
 
         chatConvoHandler = ConversationHandler(
             entry_points=[CommandHandler('startchat', self.startChatMenu),
-                          CommandHandler('currentchats', self.currentChatMenu)],
+                          CommandHandler('chats', self.currentChatMenu)],
             states={
                 0: [CallbackQueryHandler(self.beginChatHandler, pattern='start_module_chat'),
                     CallbackQueryHandler(
@@ -473,16 +566,15 @@ class TeleBot:
 
 
 def main():
-    global telebot
     telebot = TeleBot()
 
 
-def test():
+# def test():
 
-    test = 1
-    pass
+#     test = 1
+#     pass
 
 
 if __name__ == '__main__':
     main()
-    test()
+    # test()
