@@ -6,6 +6,7 @@ import logging
 
 from random import Random
 from datetime import datetime
+from tabulate import tabulate
 
 from typing import Any, Dict, List
 from telegram import Update
@@ -257,6 +258,8 @@ class TeleBot:
 
         unreadMessageCount = self.chatCache.countUnreadMessages(str(chatid))
         # print(unreadMessageCount)
+
+        finalTable = []
         for i in range(len(neighbours)):
             neighbour = neighbours[i]
             id = neighbour[GraphHandler.NEIGHBOUR_ID_LABEL]
@@ -267,13 +270,13 @@ class TeleBot:
                 count = unreadMessageCount[id]
             except KeyError:
                 count = 0
-
-            resultStr += f"{relationship}\t{alias}\t{count}"
+            finalTable.append([alias, relationship, count])
+            # resultStr += f"{relationship}\t{alias}\t{count}"
             keyboard.append([InlineKeyboardButton(
                 f"{alias}", callback_data="start_chatid"+id)])
-
+        resultStr = "<pre>" + tabulate(finalTable, headers=["User", "Relationship", "Unread Messages"], tablefmt='github') + "</pre>"
         update.message.reply_text(
-            resultStr, reply_markup=InlineKeyboardMarkup(keyboard))
+            resultStr, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         return 0
 
     def beginChatHandler(self, update: Update, context: CallbackContext):
