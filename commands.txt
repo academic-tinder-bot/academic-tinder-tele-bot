@@ -1,0 +1,7 @@
+start - set up the chatbot!
+regmodule - register modules you are taking
+delmodule - delete modules from your module list
+chats - look at current chats
+startchat - start a new chat
+delchat - delete current chats
+exit - exit current chat

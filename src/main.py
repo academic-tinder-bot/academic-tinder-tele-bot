@@ -430,7 +430,11 @@ class TeleBot:
         pass
 
     def exitChatHandler(self, update: Update, context: CallbackContext):
-        update.message.reply_text("Exiting Chat!")
+
+        context.bot.send_message(
+            chat_id = update.effective_chat.id, 
+            text="Exiting Chat!"
+        )
 
         # TODO: Hacky solution, but whatever
         try:
