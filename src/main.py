@@ -82,7 +82,7 @@ class TeleBot:
             text="Hi! I am a Telegram bot to match you anonymously to your fellow coursemates. Let's get started!")
         context.bot.send_message(
             chat_id=userid,
-            text="Enter your alias (leave blank to generate a random one)")
+            text="Enter your alias (type /random to generate a random one)")
 
         return 100
 
