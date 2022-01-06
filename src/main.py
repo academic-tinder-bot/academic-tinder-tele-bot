@@ -279,6 +279,62 @@ class TeleBot:
             resultStr, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         return 0
 
+    def deleteChatMenu(self, update: Update, context: CallbackContext):
+        chatid = update.effective_chat.id
+        user_data = context.user_data
+
+        neighbours = self.firebaseManager.getNeighbours(str(chatid))
+
+        resultStr = "Which Chat to delete? Current Chats:\n\n"
+        keyboard = []
+
+        # print(unreadMessageCount)
+
+        finalTable = []
+        for i in range(len(neighbours)):
+            neighbour = neighbours[i]
+            id = neighbour[GraphHandler.NEIGHBOUR_ID_LABEL]
+            relationship = neighbour[GraphHandler.NEIGHBOUR_RELATIONSHIP_LABEL]
+            alias = UserSettings.getAlias(id)
+
+            finalTable.append([alias, relationship])
+            # resultStr += f"{relationship}\t{alias}\t{count}"
+            keyboard.append([InlineKeyboardButton(
+                f"{alias}", callback_data=id)])
+        resultStr += "<pre>" + tabulate(finalTable, headers=["User", "Relationship"], tablefmt='github') + "</pre>"
+        
+        keyboard.append([InlineKeyboardButton("Exit", callback_data="Exit")])
+        update.message.reply_text(
+            resultStr, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        return 2
+
+    def deleteChatButton(self, update: Update, context: CallbackContext):
+        query = update.callback_query
+        query.answer()
+
+        self.firebaseManager.removeUsertoUserEdge(str(update.effective_chat.id), query.data)
+
+        context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="Chat Deleted!"
+        )
+
+        context.bot.send_message(
+            chat_id=int(query.data),
+            text=f"User {UserSettings.getAlias(update.effective_chat.id)} ended their chat with you!"
+        )
+        try:
+            context.bot_data['endedChats'][int(query.data)] = update.effective_chat.id
+        except KeyError:
+            try:
+                context.bot_data['endedChats'][int(query.data)] = {}
+            except KeyError:
+                context.bot_data['endedChats'] = {}
+                context.bot_data['endedChats'][int(query.data)] = {}
+            context.bot_data['endedChats'][int(query.data)] = update.effective_chat.id
+
+        return ConversationHandler.END
+
     def beginChatHandler(self, update: Update, context: CallbackContext):
         """Handler to begin chat.
         If callbackdata is start_chatid<userid>, then it starts the chat session (continue)
@@ -401,6 +457,16 @@ class TeleBot:
         msg_final = ("{alias} {time} \n{message}".format(
             alias=alias, time=time, message=message))
 
+        try:
+            if(context.bot_data['endedChats'][update.effective_chat.id] == int(userid)):
+                print(context.bot_data['endedChats'][update.effective_chat.id])
+                print(userid)
+                print(chatid)
+                context.bot_data['endedChats'].pop(update.effective_chat.id)
+                return -1
+        except KeyError:
+            pass
+        
         if(self.isInChat(userid, chatid)):
             # update.message.reply_text(
             #     f"DEBUG: Sending message to {userid}: \n\n{msg_final}", parse_mode=telegram.ParseMode.MARKDOWN_V2)
@@ -543,7 +609,8 @@ class TeleBot:
 
         chatConvoHandler = ConversationHandler(
             entry_points=[CommandHandler('startchat', self.startChatMenu),
-                          CommandHandler('chats', self.currentChatMenu)],
+                          CommandHandler('chats', self.currentChatMenu),
+                          CommandHandler('delchat', self.deleteChatMenu)],
             states={
                 0: [CallbackQueryHandler(self.beginChatHandler, pattern='start_module_chat'),
                     CallbackQueryHandler(
@@ -552,7 +619,8 @@ class TeleBot:
                         self.exitChatHandler, pattern='exit_chat'),
                     CommandHandler('exit', self.exitChatHandler)],
                 1: [CommandHandler('exit', self.exitChatHandler),
-                    MessageHandler(Filters.text, self.chatHandler)]
+                    MessageHandler(Filters.text, self.chatHandler)],
+                2: [CallbackQueryHandler(self.deleteChatButton)]
             },
             fallbacks=[]
         )
