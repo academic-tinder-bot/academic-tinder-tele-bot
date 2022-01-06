@@ -275,6 +275,7 @@ class TeleBot:
             keyboard.append([InlineKeyboardButton(
                 f"{alias}", callback_data="start_chatid"+id)])
         resultStr = "<pre>" + tabulate(finalTable, headers=["User", "Relationship", "Unread Messages"], tablefmt='github') + "</pre>"
+        keyboard.append([InlineKeyboardButton("Exit", callback_data="exit_chat")])
         update.message.reply_text(
             resultStr, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         return 0
@@ -433,7 +434,7 @@ class TeleBot:
 
         context.bot.send_message(
             chat_id = update.effective_chat.id, 
-            text="Exiting Chat!"
+            text="Exiting!"
         )
 
         # TODO: Hacky solution, but whatever
